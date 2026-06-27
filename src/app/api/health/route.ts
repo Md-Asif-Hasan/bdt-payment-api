@@ -15,6 +15,13 @@ export async function GET() {
   metrics.requestCount++;
   metrics.lastRequestTime = now.toISOString();
 
+  // Use the correct project ID (check both env var names for compatibility)
+  const projectId = process.env.FIREBASE_PROJECT_ID || process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
+  
+  if (!projectId) {
+    console.error('[Firebase] ERROR: No project ID found. Set FIREBASE_PROJECT_ID or NEXT_PUBLIC_FIREBASE_PROJECT_ID');
+  }
+
   // Check Firebase connection
   let firebaseStatus = 'unknown';
   let firebaseLatency = 0;
@@ -41,7 +48,7 @@ export async function GET() {
 
   // Add helpful context based on error type (after firebaseStatusInfo is defined)
   if (firebaseError && (firebaseError.includes('NOT_FOUND') || firebaseError.includes('404'))) {
-    firebaseError += ` - Missing Firebase credentials (FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY). Project ID: ${firebaseStatusInfo.projectId}`;
+    firebaseError += ` - Missing credentials. Project ID: ${projectId || firebaseStatusInfo.projectId}`;
   }
   if (firebaseError && (firebaseError.includes('PERMISSION_DENIED') || firebaseError.includes('403'))) {
     firebaseError += ' - Permission denied. Verify service account has Firestore permissions.';
