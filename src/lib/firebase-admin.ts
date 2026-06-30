@@ -42,7 +42,6 @@ export function getAdminDb(): admin.firestore.Firestore {
   try {
     initializeApp();
     _db = admin.firestore();
-    // Explicitly target the (default) database (named databases need "(default)")
     _db.settings({ ignoreUndefinedProperties: true });
     return _db;
   } catch (err) {
