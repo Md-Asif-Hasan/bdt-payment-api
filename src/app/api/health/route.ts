@@ -3,7 +3,6 @@ import { getAdminDb, getFirebaseStatus } from '@/lib/firebase-admin';
 
 export const dynamic = 'force-dynamic';
 
-// Simple in-memory metrics (resets on deployment)
 const metrics = {
   requestCount: 0,
   lastRequestTime: null as string | null,
@@ -17,55 +16,29 @@ export async function GET() {
   metrics.requestCount++;
   metrics.lastRequestTime = now.toISOString();
 
-  // Use the correct project ID (check both env var names for compatibility)
-  const projectId = process.env.FIREBASE_PROJECT_ID || process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
-  
-  if (!projectId) {
-    console.error('[Firebase] ERROR: No project ID found. Set FIREBASE_PROJECT_ID or NEXT_PUBLIC_FIREBASE_PROJECT_ID');
-  }
-
-  // Check Firebase connection
   let firebaseStatus = 'unknown';
   let firebaseLatency = 0;
   let firebaseError: string | null = null;
-  
+
   try {
     const start = Date.now();
-    // Try listing collections to verify connection
     const db = getAdminDb();
-    const collections = await db.listCollections();
+    await db.listCollections();
     firebaseLatency = Date.now() - start;
     firebaseStatus = 'healthy';
   } catch (error: any) {
     firebaseStatus = 'error';
-    // Log the full error for debugging
-    console.error('[Firebase] Full error details:', error);
-    
-    // Handle NOT_FOUND gracefully (empty database is OK)
-    if (error.code === 5 || error.message?.includes('NOT_FOUND')) {
-      firebaseStatus = 'healthy';
-      firebaseError = null;
-      firebaseLatency = Date.now() - Date.now();
-    } else {
-      firebaseError = error.message || error.code || 'Unknown error';
-      metrics.errors++;
-      metrics.lastErrorTime = now.toISOString();
-    }
+    firebaseError = error.message || String(error.code) || 'Unknown error';
+    console.error('[Firebase] Health check error:', firebaseError);
+    metrics.errors++;
+    metrics.lastErrorTime = now.toISOString();
   }
 
   const uptime = Math.floor((Date.now() - new Date(metrics.startTime).getTime()) / 1000);
-  const firebaseStatusInfo = getFirebaseStatus();
-
-  // Add helpful context based on error type (after firebaseStatusInfo is defined)
-  if (firebaseError && (firebaseError.includes('NOT_FOUND') || firebaseError.includes('404'))) {
-    firebaseError += ` - Missing credentials. Project ID: ${projectId || firebaseStatusInfo.projectId}`;
-  }
-  if (firebaseError && (firebaseError.includes('PERMISSION_DENIED') || firebaseError.includes('403'))) {
-    firebaseError += ' - Permission denied. Verify service account has Firestore permissions.';
-  }
+  const fsInfo = getFirebaseStatus();
 
   return NextResponse.json({
-    status: 'ok',
+    status: firebaseStatus === 'healthy' ? 'ok' : 'degraded',
     timestamp: now.toISOString(),
     uptime: `${uptime}s`,
     metrics: {
@@ -78,9 +51,9 @@ export async function GET() {
       status: firebaseStatus,
       latency: `${firebaseLatency}ms`,
       error: firebaseError,
-      initialized: firebaseStatusInfo.initialized,
-      hasServiceAccount: firebaseStatusInfo.hasServiceAccount,
-      projectId: firebaseStatusInfo.projectId,
+      initialized: fsInfo.initialized,
+      hasServiceAccount: fsInfo.hasServiceAccount,
+      projectId: fsInfo.projectId,
     },
     environment: {
       projectId: process.env.FIREBASE_PROJECT_ID,
@@ -90,8 +63,7 @@ export async function GET() {
         process.env.FIREBASE_CLIENT_EMAIL &&
         process.env.FIREBASE_PRIVATE_KEY
       ),
-      version: '1.2.0',
-      url: process.env.NEXT_PUBLIC_API_URL || 'https://universal-bdt-payment-api.vercel.app',
+      version: '1.3.0',
     },
   });
 }
