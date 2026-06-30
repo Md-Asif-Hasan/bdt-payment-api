@@ -5,6 +5,13 @@ export const dynamic = 'force-dynamic';
 
 export async function POST(request: NextRequest) {
   try {
+    const authHeader = request.headers.get('authorization');
+    
+    // Allow test mode with Bearer token
+    if (!authHeader || !authHeader.startsWith('Bearer test-token-')) {
+      return NextResponse.json({ error: 'Unauthorized - test token required' }, { status: 401 });
+    }
+
     const body = await request.json();
     const { userId } = body;
 

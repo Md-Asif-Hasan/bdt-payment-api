@@ -30,8 +30,11 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      requestId,
-      ...paymentData,
+      data: {
+        requestId,
+        ...paymentData,
+        expiry: paymentData.expiresAt,
+      },
     });
   } catch (error) {
     console.error('Create payment error:', error);
