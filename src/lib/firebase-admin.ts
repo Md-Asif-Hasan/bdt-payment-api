@@ -32,6 +32,7 @@ function getOrInitApp(): admin.app.App {
 
   const app = admin.initializeApp({
     credential: admin.credential.cert({ projectId, clientEmail, privateKey: formattedKey }),
+    projectId: projectId,
   });
 
   console.log(`[Firebase] Initialised — project: ${projectId}`);
@@ -44,22 +45,41 @@ export function getAdminDb(): admin.firestore.Firestore {
   try {
     const app = getOrInitApp();
 
-    // Use the modular getFirestore() API with explicit databaseId "(default)"
-    // This ensures the SDK connects to the default Firestore database
-    _db = getFirestore(app, '(default)');
+    // Try multiple approaches to connect to Firestore
+    // First try without databaseId (let SDK auto-detect)
+    try {
+      _db = getFirestore(app);
+      const settings: Settings = {
+        ignoreUndefinedProperties: true,
+        preferRest: true,
+      };
+      _db.settings(settings);
+      console.log('[Firebase] Firestore initialized (auto-detect database)');
+    } catch (autoErr: any) {
+      console.warn('[Firebase] Auto-detect failed, trying explicit (default):', autoErr.message);
+      console.warn('[Firebase] Auto-detect error code:', autoErr.code);
+      // Fallback to explicit "(default)" databaseId
+      try {
+        _db = getFirestore(app, '(default)');
+        const settings: Settings = {
+          ignoreUndefinedProperties: true,
+          preferRest: true,
+        };
+        _db.settings(settings);
+        console.log('[Firebase] Firestore initialized with explicit databaseId: (default)');
+      } catch (explicitErr: any) {
+        console.error('[Firebase] Explicit (default) also failed:', explicitErr.message);
+        console.error('[Firebase] Explicit error code:', explicitErr.code);
+        console.error('[Firebase] Full error:', JSON.stringify(explicitErr, null, 2));
+        throw explicitErr;
+      }
+    }
 
-    const settings: Settings = {
-      ignoreUndefinedProperties: true,
-      // preferRest avoids gRPC channel issues in serverless environments
-      preferRest: true,
-    };
-    _db.settings(settings);
-
-    console.log('[Firebase] Firestore initialized with databaseId: (default)');
     return _db;
   } catch (err) {
     initError = err instanceof Error ? err : new Error(String(err));
     console.error('[Firebase] getAdminDb error:', initError.message);
+    console.error('[Firebase] Error details:', JSON.stringify(err, null, 2));
     throw initError;
   }
 }
