@@ -19,7 +19,7 @@ export async function POST(request: NextRequest) {
 
     // ── TEST MODE ─────────────────────────────────────────────────────────────
     if (forceTest || isTestToken(authHeader)) {
-      const result = testStore.submitTrxId(requestId, trxId, senderNumber);
+      const result = await testStore.submitTrxId(requestId, trxId, senderNumber);
       if (!result.ok) {
         return NextResponse.json({ error: result.error }, { status: result.error === 'Payment request not found' ? 404 : 400 });
       }

@@ -1,8 +1,10 @@
 /**
- * In-memory test store for end-to-end testing without Firestore.
+ * Test store for end-to-end testing.
+ * Uses Firestore for persistence across Vercel serverless function restarts.
  * Used when Authorization header contains a "Bearer test-token-*" value.
- * Data resets on each server restart (fine for testing).
  */
+
+import { getAdminDb } from './firebase-admin';
 
 export interface TestPaymentRequest {
   id: string;
@@ -31,10 +33,6 @@ export interface TestSubscription {
   paymentRequestId: string;
   expiredAt?: string;
 }
-
-// Global in-memory maps (persist within server process lifetime)
-const paymentRequests = new Map<string, TestPaymentRequest>();
-const subscriptions = new Map<string, TestSubscription>();
 
 // Simple ID generator
 function genId(): string {
@@ -66,7 +64,8 @@ function calculateEndDate(plan: string): string {
 export const testStore = {
   // --- Payment Requests ---
 
-  createPayment(plan: string, userId: string): TestPaymentRequest {
+  async createPayment(plan: string, userId: string): Promise<TestPaymentRequest> {
+    const db = getAdminDb();
     const id = genId();
     const req: TestPaymentRequest = {
       id,
@@ -77,93 +76,124 @@ export const testStore = {
       createdAt: new Date().toISOString(),
       expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
     };
-    paymentRequests.set(id, req);
+    await db.collection('test_payment_requests').doc(id).set(req);
     return req;
   },
 
-  getPayment(id: string): TestPaymentRequest | undefined {
-    return paymentRequests.get(id);
+  async getPayment(id: string): Promise<TestPaymentRequest | null> {
+    const db = getAdminDb();
+    const doc = await db.collection('test_payment_requests').doc(id).get();
+    if (!doc.exists) return null;
+    return doc.data() as TestPaymentRequest;
   },
 
-  submitTrxId(id: string, trxId: string, senderNumber?: string): { ok: boolean; error?: string } {
-    const req = paymentRequests.get(id);
-    if (!req) return { ok: false, error: 'Payment request not found' };
+  async submitTrxId(id: string, trxId: string, senderNumber?: string): Promise<{ ok: boolean; error?: string }> {
+    const db = getAdminDb();
+    const doc = await db.collection('test_payment_requests').doc(id).get();
+    if (!doc.exists) return { ok: false, error: 'Payment request not found' };
+    
+    const req = doc.data() as TestPaymentRequest;
     if (req.status !== 'pending') return { ok: false, error: `Payment is already ${req.status}` };
-    req.status = 'awaiting_verification';
-    req.trxId = trxId;
-    req.senderNumber = senderNumber;
-    req.submittedAt = new Date().toISOString();
-    paymentRequests.set(id, req);
+    
+    await db.collection('test_payment_requests').doc(id).update({
+      status: 'awaiting_verification',
+      trxId,
+      senderNumber,
+      submittedAt: new Date().toISOString(),
+    });
     return { ok: true };
   },
 
-  verifyBySms(trxId: string, amount: number, provider: string, sender: string, rawMessage: string): {
+  async verifyBySms(trxId: string, amount: number, provider: string, sender: string, rawMessage: string): Promise<{
     ok: boolean; error?: string; duplicate?: boolean; requestId?: string; userId?: string; plan?: string;
-  } {
+  }> {
+    const db = getAdminDb();
     // Normalize phone numbers for comparison
     const normalizePhone = (phone: string) => phone.replace(/[\s-]/g, '').replace(/^0/, '880').slice(-11);
 
     // Find awaiting_verification request matching the amount
-    for (const [id, req] of paymentRequests.entries()) {
-      if (req.status === 'awaiting_verification' && req.amount === amount) {
-        // If a trxId was submitted, verify it matches
-        if (req.trxId && req.trxId !== trxId) continue;
+    const snapshot = await db.collection('test_payment_requests')
+      .where('status', '==', 'awaiting_verification')
+      .where('amount', '==', amount)
+      .get();
 
-        // Verify sender number matches if both are present
-        if (req.senderNumber && sender) {
-          const normalizedStoredSender = normalizePhone(req.senderNumber);
-          const normalizedSmsSender = normalizePhone(sender);
-          if (normalizedStoredSender !== normalizedSmsSender) continue;
-        }
+    for (const doc of snapshot.docs) {
+      const req = doc.data() as TestPaymentRequest;
+      
+      // If a trxId was submitted, verify it matches
+      if (req.trxId && req.trxId !== trxId) continue;
 
-        req.status = 'verified';
-        req.verifiedAt = new Date().toISOString();
-        req.provider = provider;
-        req.sender = sender;
-        req.rawMessage = rawMessage;
-        req.trxId = trxId;
-        paymentRequests.set(id, req);
-
-        // Create/update subscription
-        const sub: TestSubscription = {
-          userId: req.userId,
-          plan: req.plan,
-          status: 'active',
-          startDate: new Date().toISOString(),
-          endDate: calculateEndDate(req.plan),
-          amount: req.amount,
-          paymentRequestId: id,
-        };
-        subscriptions.set(req.userId, sub);
-
-        return { ok: true, requestId: id, userId: req.userId, plan: req.plan };
+      // Verify sender number matches if both are present
+      if (req.senderNumber && sender) {
+        const normalizedStoredSender = normalizePhone(req.senderNumber);
+        const normalizedSmsSender = normalizePhone(sender);
+        if (normalizedStoredSender !== normalizedSmsSender) continue;
       }
-      // Already verified — duplicate
-      if (req.status === 'verified' && req.trxId === trxId) {
-        return { ok: false, duplicate: true, error: 'Payment already verified' };
-      }
+
+      await db.collection('test_payment_requests').doc(doc.id).update({
+        status: 'verified',
+        verifiedAt: new Date().toISOString(),
+        provider,
+        sender,
+        rawMessage,
+        trxId,
+      });
+
+      // Create/update subscription
+      const sub: TestSubscription = {
+        userId: req.userId,
+        plan: req.plan,
+        status: 'active',
+        startDate: new Date().toISOString(),
+        endDate: calculateEndDate(req.plan),
+        amount: req.amount,
+        paymentRequestId: doc.id,
+      };
+      await db.collection('test_subscriptions').doc(req.userId).set(sub);
+
+      return { ok: true, requestId: doc.id, userId: req.userId, plan: req.plan };
     }
+
+    // Check for duplicate
+    const duplicateSnapshot = await db.collection('test_payment_requests')
+      .where('status', '==', 'verified')
+      .where('trxId', '==', trxId)
+      .get();
+    
+    if (!duplicateSnapshot.empty) {
+      return { ok: false, duplicate: true, error: 'Payment already verified' };
+    }
+
     return { ok: false, error: 'No matching awaiting_verification request found for this amount and sender' };
   },
 
-  expireSubscription(userId: string): { ok: boolean; error?: string; expiredAt?: string } {
-    const sub = subscriptions.get(userId);
-    if (!sub) {
-      // Also check by userId in map values
-      for (const [key, s] of subscriptions.entries()) {
-        if (s.userId === userId) {
-          s.status = 'expired';
-          s.expiredAt = new Date().toISOString();
-          subscriptions.set(key, s);
-          return { ok: true, expiredAt: s.expiredAt };
-        }
+  async expireSubscription(userId: string): Promise<{ ok: boolean; error?: string; expiredAt?: string }> {
+    const db = getAdminDb();
+    const doc = await db.collection('test_subscriptions').doc(userId).get();
+    if (!doc.exists) {
+      // Also check by userId in collection
+      const snapshot = await db.collection('test_subscriptions')
+        .where('userId', '==', userId)
+        .get();
+      
+      if (snapshot.empty) {
+        return { ok: false, error: 'No subscription found for this user' };
       }
-      return { ok: false, error: 'No subscription found for this user' };
+      
+      const expiredAt = new Date().toISOString();
+      await snapshot.docs[0].ref.update({
+        status: 'expired',
+        expiredAt,
+      });
+      return { ok: true, expiredAt };
     }
-    sub.status = 'expired';
-    sub.expiredAt = new Date().toISOString();
-    subscriptions.set(userId, sub);
-    return { ok: true, expiredAt: sub.expiredAt };
+    
+    const expiredAt = new Date().toISOString();
+    await doc.ref.update({
+      status: 'expired',
+      expiredAt,
+    });
+    return { ok: true, expiredAt };
   },
 };
 

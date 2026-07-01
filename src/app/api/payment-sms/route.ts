@@ -42,9 +42,9 @@ export async function POST(request: NextRequest) {
     const numericAmount = Number(amount);
 
     // 3. ── TEST MODE ─────────────────────────────────────────────────────────
-    //    Try in-memory test store first. If there is a matching awaiting_verification
-    //    request we complete the test flow without touching Firestore.
-    const testResult = testStore.verifyBySms(trxId, numericAmount, provider, sender, rawMessage);
+    //    Try test store first. If there is a matching awaiting_verification
+    //    request we complete the test flow using Firestore test collections.
+    const testResult = await testStore.verifyBySms(trxId, numericAmount, provider, sender, rawMessage);
     if (testResult.ok) {
       return NextResponse.json({
         success: true,

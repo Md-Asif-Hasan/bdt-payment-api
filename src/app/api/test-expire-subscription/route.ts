@@ -27,8 +27,8 @@ export async function POST(request: NextRequest) {
 
     const expiredAt = new Date().toISOString();
 
-    // ── Try in-memory test store first ────────────────────────────────────────
-    const testResult = testStore.expireSubscription(userId);
+    // ── Try test store first ────────────────────────────────────────
+    const testResult = await testStore.expireSubscription(userId);
 
     // ── Also expire in Firestore (best-effort) ────────────────────────────────
     let firestoreExpired = false;

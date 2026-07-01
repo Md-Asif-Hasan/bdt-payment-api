@@ -31,11 +31,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'plan is required' }, { status: 400 });
     }
 
-    // ── TEST MODE (no Firestore needed) ──────────────────────────────────────
+    // ── TEST MODE (uses Firestore for persistence) ─────────────────────────────
     if (forceTest || isTestToken(authHeader)) {
       console.log('[create-payment] Using TEST MODE');
       const userId = getTestUserId(authHeader) || bodyUserId || 'test_user';
-      const req = testStore.createPayment(plan, userId);
+      const req = await testStore.createPayment(plan, userId);
       console.log('[create-payment] Created request:', req.id);
       return NextResponse.json({
         success: true,
