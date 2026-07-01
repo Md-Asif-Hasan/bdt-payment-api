@@ -47,10 +47,6 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    console.log('[create-payment] Using PRODUCTION MODE');
-      });
-    }
-
     // ── PRODUCTION MODE ───────────────────────────────────────────────────────
     const db = getAdminDb();
     const paymentRef = db.collection('payment_requests').doc();
