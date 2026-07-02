@@ -111,24 +111,49 @@ export const testStore = {
     // Normalize phone numbers for comparison
     const normalizePhone = (phone: string) => phone.replace(/[\s-]/g, '').replace(/^0/, '880').slice(-11);
 
+    console.log('[test-store.verifyBySms] Looking for payment with amount:', amount, 'trxId:', trxId, 'sender:', sender);
+
     // Find awaiting_verification request matching the amount
     const snapshot = await db.collection('test_payment_requests')
       .where('status', '==', 'awaiting_verification')
       .where('amount', '==', amount)
       .get();
 
+    console.log('[test-store.verifyBySms] Found', snapshot.size, 'awaiting_verification requests with amount', amount);
+
     for (const doc of snapshot.docs) {
       const req = doc.data() as TestPaymentRequest;
+      console.log('[test-store.verifyBySms] Checking request:', {
+        id: doc.id,
+        userId: req.userId,
+        trxId: req.trxId,
+        senderNumber: req.senderNumber,
+        amount: req.amount,
+        status: req.status,
+      });
       
       // If a trxId was submitted, verify it matches
-      if (req.trxId && req.trxId !== trxId) continue;
+      if (req.trxId && req.trxId !== trxId) {
+        console.log('[test-store.verifyBySms] TrxID mismatch:', req.trxId, '!=', trxId);
+        continue;
+      }
 
       // Verify sender number matches if both are present
       if (req.senderNumber && sender) {
         const normalizedStoredSender = normalizePhone(req.senderNumber);
         const normalizedSmsSender = normalizePhone(sender);
-        if (normalizedStoredSender !== normalizedSmsSender) continue;
+        console.log('[test-store.verifyBySms] Normalized sender comparison:', {
+          stored: normalizedStoredSender,
+          sms: normalizedSmsSender,
+          match: normalizedStoredSender === normalizedSmsSender,
+        });
+        if (normalizedStoredSender !== normalizedSmsSender) {
+          console.log('[test-store.verifyBySms] Sender mismatch');
+          continue;
+        }
       }
+
+      console.log('[test-store.verifyBySms] Match found! Verifying payment request:', doc.id);
 
       await db.collection('test_payment_requests').doc(doc.id).update({
         status: 'verified',
@@ -151,6 +176,8 @@ export const testStore = {
       };
       await db.collection('test_subscriptions').doc(req.userId).set(sub);
 
+      console.log('[test-store.verifyBySms] Subscription created for user:', req.userId);
+
       return { ok: true, requestId: doc.id, userId: req.userId, plan: req.plan };
     }
 
@@ -161,9 +188,11 @@ export const testStore = {
       .get();
     
     if (!duplicateSnapshot.empty) {
+      console.log('[test-store.verifyBySms] Duplicate TrxID found');
       return { ok: false, duplicate: true, error: 'Payment already verified' };
     }
 
+    console.log('[test-store.verifyBySms] No matching payment request found');
     return { ok: false, error: 'No matching awaiting_verification request found for this amount and sender' };
   },
 

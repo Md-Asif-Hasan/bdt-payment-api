@@ -47,7 +47,9 @@ export async function POST(request: NextRequest) {
     // 3. ── TEST MODE ─────────────────────────────────────────────────────────
     //    Try test store first. If there is a matching awaiting_verification
     //    request we complete the test flow using Firestore test collections.
+    console.log('[payment-sms] Attempting test verification with:', { trxId, amount: numericAmount, provider, sender });
     const testResult = await testStore.verifyBySms(trxId, numericAmount, provider, sender, rawMessage);
+    console.log('[payment-sms] Test verification result:', testResult);
     if (testResult.ok) {
       return NextResponse.json({
         success: true,

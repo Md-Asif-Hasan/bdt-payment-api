@@ -19,16 +19,19 @@ export async function POST(request: NextRequest) {
     }
 
     const body   = await request.json();
-    const userId = body.userId || getTestUserId(authHeader);
+    const userId = body.userId || body.phoneNumber || getTestUserId(authHeader);
 
     if (!userId) {
-      return NextResponse.json({ error: 'userId is required' }, { status: 400 });
+      return NextResponse.json({ error: 'userId or phoneNumber is required' }, { status: 400 });
     }
+
+    console.log('[test-expire] Expiring subscription for userId:', userId);
 
     const expiredAt = new Date().toISOString();
 
     // ── Try test store first ────────────────────────────────────────
     const testResult = await testStore.expireSubscription(userId);
+    console.log('[test-expire] Test store result:', testResult);
 
     // ── Also expire in Firestore (best-effort) ────────────────────────────────
     let firestoreExpired = false;
@@ -43,6 +46,7 @@ export async function POST(request: NextRequest) {
         });
         await batch.commit();
         firestoreExpired = true;
+        console.log(`[test-expire] Expired ${snapshot.size} subscription(s) in Firestore`);
       }
 
       // ── Clear user premium flag ────────────────────────────────────────────
@@ -62,6 +66,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (!testResult.ok && !firestoreExpired) {
+      console.log('[test-expire] No subscription found in either test store or Firestore');
       return NextResponse.json(
         { error: 'No subscription found for this user' },
         { status: 404 },
@@ -71,7 +76,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       message:  'Subscription expired for testing',
-      data:     { expiredAt, userId, firestoreExpired },
+      data:     { expiredAt, userId, firestoreExpired, testStoreExpired: testResult.ok },
     });
   } catch (error) {
     console.error('[test-expire] Error:', error);
